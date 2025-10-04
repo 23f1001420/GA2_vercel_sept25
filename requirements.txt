@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-pydantic
+panadas
 numpy
-fastapi[all]  # optional, includes CORS support
+
 
