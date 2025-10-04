@@ -1,62 +1,57 @@
-# api/index.py
-import json
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Dict
+import pandas as pd
 import numpy as np
 from pathlib import Path
 
-# Load telemetry data (make sure q-vercel-latency.json is in the api/ folder)
-data_file = Path(__file__).parent / "q-vercel-latency.json"
-with open(data_file) as f:
-    telemetry_data = json.load(f)
-
-# FastAPI app
 app = FastAPI()
 
-# Enable CORS for POST from any origin
+# Enable CORS for all origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["POST"],
-    allow_headers=["*"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
-# Request body model
-class LatencyRequest(BaseModel):
-    regions: List[str]
-    threshold_ms: float
+# Load the dataset once when the app starts
+# The data file should be in the same directory as this script
+DATA_FILE = Path(__file__).parent / "q-vercel-latency.json"
+df = pd.read_json(DATA_FILE)
 
-# POST endpoint
-@app.post("/latency")
-def check_latency(payload: LatencyRequest):
-    regions = payload.regions
-    threshold = payload.threshold_ms
 
-    response: Dict[str, Dict] = {}
-
-    for region in regions:
-        region_data = [rec for rec in telemetry_data if rec["region"] == region]
-        if not region_data:
-            continue
-
-        latencies = [rec["latency_ms"] for rec in region_data]
-        uptimes = [rec["uptime"] for rec in region_data]
-
-        response[region] = {
-            "avg_latency": float(np.mean(latencies)),
-            "p95_latency": float(np.percentile(latencies, 95)),
-            "avg_uptime": float(np.mean(uptimes)),
-            "breaches": sum(1 for l in latencies if l > threshold)
-        }
-
-    if not response:
-        raise HTTPException(status_code=404, detail="No data for requested regions")
-
-    return response
-
-# Optional root GET for testing
 @app.get("/")
-def read_root():
-    return {"message": "Hello, World!"}
+async def root():
+    return {"message": "Vercel Latency Analytics API is running."}
+
+
+@app.post("/api/")
+async def get_latency_stats(request: Request):
+    payload = await request.json()
+    regions_to_process = payload.get("regions", [])
+    threshold = payload.get("threshold_ms", 200)
+
+    results = []
+
+    for region in regions_to_process:
+        region_df = df[df["region"] == region]
+
+        if not region_df.empty:
+            avg_latency = round(region_df["latency_ms"].mean(), 2)
+            p95_latency = round(np.percentile(region_df["latency_ms"], 95), 2)
+            avg_uptime = round(region_df["uptime_pct"].mean(), 3)
+            breaches = int(region_df[region_df["latency_ms"] > threshold].shape[0])
+
+            results.append(
+                {
+                    "region": region,
+                    "avg_latency": avg_latency,
+                    "p95_latency": p95_latency,
+                    "avg_uptime": avg_uptime,
+                    "breaches": breaches,
+                }
+            )
+
+    return {"regions": results}
