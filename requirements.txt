@@ -1,1 +1,6 @@
 fastapi
+uvicorn
+pydantic
+numpy
+fastapi[all]  # optional, includes CORS support
+
